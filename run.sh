@@ -12,7 +12,7 @@ BACKEND_PID=$!
 
 # 2. Start Gradio Conversational Agent in background
 echo "[2/3] Launching Gradio Conversational Agent on http://localhost:7860..."
-python gradio/app.py &
+python gradio_ui/app.py &
 GRADIO_PID=$!
 
 # 3. Start React Frontend

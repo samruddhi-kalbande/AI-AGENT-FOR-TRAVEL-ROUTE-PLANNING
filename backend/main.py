@@ -154,7 +154,27 @@ def get_sample_plans() -> List[Dict[str, Any]]:
     ]
 
 
+# ─── Mount Gradio Conversational Agent ─────────────────────────────────────────
+try:
+    import gradio as gr
+    from gradio_ui.app import demo as gradio_demo
+    app = gr.mount_gradio_app(app, gradio_demo, path="/chat")
+    print("✅ Gradio Conversational Agent mounted at /chat")
+except Exception as e:
+    print(f"Notice: Gradio mount skipped: {e}")
+
+
+# ─── Mount Frontend Production Build (Single Web Service) ──────────────────────
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+
+dist_dir = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if dist_dir.exists():
+    app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="frontend_spa")
+    print("✅ React Frontend static SPA mounted at /")
+
+
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("BACKEND_PORT", 8000))
+    port = int(os.environ.get("PORT", os.environ.get("BACKEND_PORT", 8000)))
     uvicorn.run("backend.main:app", host="0.0.0.0", port=port, reload=True)
