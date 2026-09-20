@@ -36,8 +36,8 @@ app.add_middleware(
 )
 
 
-@app.get("/")
-def root():
+@app.get("/api")
+def api_info():
     return {
         "message": "Atlas Travel Route Planning AI Agent API is running.",
         "documentation": "/docs",
@@ -159,19 +159,41 @@ try:
     import gradio as gr
     from gradio_ui.app import demo as gradio_demo
     app = gr.mount_gradio_app(app, gradio_demo, path="/chat")
-    print("✅ Gradio Conversational Agent mounted at /chat")
+    print("[INFO] Gradio Conversational Agent mounted at /chat")
 except Exception as e:
     print(f"Notice: Gradio mount skipped: {e}")
 
 
 # ─── Mount Frontend Production Build (Single Web Service) ──────────────────────
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pathlib import Path
 
 dist_dir = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if dist_dir.exists():
-    app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="frontend_spa")
-    print("✅ React Frontend static SPA mounted at /")
+    assets_dir = dist_dir / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    @app.get("/")
+    async def serve_index():
+        return FileResponse(str(dist_dir / "index.html"))
+
+    @app.get("/{full_path:path}")
+    async def serve_spa_catchall(full_path: str):
+        requested_file = dist_dir / full_path
+        if requested_file.exists() and requested_file.is_file():
+            return FileResponse(str(requested_file))
+        return FileResponse(str(dist_dir / "index.html"))
+    print("[INFO] React Frontend static SPA mounted at /")
+else:
+    @app.get("/")
+    def fallback_root():
+        return {
+            "message": "Atlas Travel Route Planning AI Agent API is running.",
+            "documentation": "/docs",
+            "health": "/api/health"
+        }
 
 
 if __name__ == "__main__":
