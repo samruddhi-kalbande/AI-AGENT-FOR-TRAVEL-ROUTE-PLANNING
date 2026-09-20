@@ -28,20 +28,39 @@ TOOL_MAP = {t.name: t for t in TRAVEL_AGENT_TOOLS}
 
 
 def get_groq_llm(temperature: float = 0.3):
-    """Initializes ChatGroq if API key is present."""
+    """Initializes ChatGroq if API key is present, with automatic model fallback."""
     groq_api_key = os.environ.get("GROQ_API_KEY", "").strip()
     if not groq_api_key or groq_api_key == "your_groq_api_key_here":
         return None
 
     try:
         from langchain_groq import ChatGroq
-        model_name = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
-        return ChatGroq(
-            api_key=groq_api_key,
-            model_name=model_name,
-            temperature=temperature,
-            max_retries=2
-        )
+        configured_model = os.environ.get("GROQ_MODEL", "").strip()
+        candidates = []
+        if configured_model:
+            candidates.append(configured_model)
+        candidates.extend([
+            "openai/gpt-oss-120b",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.8-27b"
+        ])
+
+        seen = set()
+        unique_candidates = [c for c in candidates if not (c in seen or seen.add(c))]
+
+        for model_name in unique_candidates:
+            try:
+                return ChatGroq(
+                    api_key=groq_api_key,
+                    model_name=model_name,
+                    temperature=temperature,
+                    max_retries=2
+                )
+            except Exception:
+                continue
+        return None
     except Exception as e:
         print(f"Warning: Could not initialize ChatGroq: {e}")
         return None
