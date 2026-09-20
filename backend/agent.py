@@ -217,95 +217,175 @@ def generate_direct_tool_plan(req: TripPlanRequest, tool_logs: List[str]) -> Tri
                 elif "content" in item:
                     tavily_insights.append(item.get("title", "") + ": " + item["content"])
 
-    # Get destination-specific attractions from curated database
-    from backend.tools import DESTINATION_ATTRACTIONS, DESTINATION_FOOD, _get_dest_key
-    dest_key = _get_dest_key(req.destination)
+    # 6. Groq + Tavily Dynamic Synthesis for Places, Food & Day-wise Itinerary
+    llm = get_groq_llm()
+    places = []
+    food_items = []
+    dynamic_success = False
 
-    db_places = DESTINATION_ATTRACTIONS.get(dest_key, [])
-    if db_places:
-        places = [
-            {
-                "name": p["name"],
-                "category": p["category"],
-                "description": p["description"],
-                "best_time_to_visit": p.get("best_time_to_visit", "Morning"),
-                "estimated_entry_cost": p.get("estimated_entry_cost", "Varies"),
-                "tags": p.get("tags", []),
-                "is_web_search_verified": is_live_tavily
-            }
-            for p in db_places
-        ]
-    else:
-        places = [
-            {
-                "name": f"Top Landmark in {req.destination}",
-                "category": "Must-See Landmark",
-                "description": f"The primary iconic attraction of {req.destination}. Recommended to research specific sights via Tavily or local guides.",
-                "best_time_to_visit": "Morning",
-                "estimated_entry_cost": "Varies",
-                "tags": ["Sightseeing", "Photography"],
-                "is_web_search_verified": is_live_tavily
-            },
-            {
-                "name": f"Historic & Cultural District",
-                "category": "History & Culture",
-                "description": f"Walkable heritage zone with local shops, architecture, and cultural sites in {req.destination}.",
-                "best_time_to_visit": "Afternoon",
-                "estimated_entry_cost": "Free - Moderate",
-                "tags": ["Culture", "Walking", "Architecture"],
-                "is_web_search_verified": is_live_tavily
-            },
-            {
-                "name": f"Nature & Scenic Area near {req.destination}",
-                "category": "Nature & Outdoors",
-                "description": "Scenic trail, park, or natural area near the destination for outdoor activities and photography.",
-                "best_time_to_visit": "Early Morning",
-                "estimated_entry_cost": "Free",
-                "tags": ["Nature", "Outdoors", "Scenic"],
-                "is_web_search_verified": is_live_tavily
-            },
-        ]
+    if llm and tavily_insights:
+        try:
+            tool_logs.append("Groq LLM Synthesis: Generating destination-tailored places, cuisine, and activities from live Tavily research")
+            tavily_context = "\n".join(tavily_insights[:6])
+            interests_text = ", ".join(req.interests) if req.interests else "sightseeing, food, culture, nature"
 
-    # Enrich with Tavily web search content if available
-    if tavily_insights:
-        for i, place in enumerate(places):
-            if i < len(tavily_insights):
-                place["description"] = place["description"] + " | Live Info: " + tavily_insights[i][:200]
-                place["is_web_search_verified"] = True
+            synth_prompt = f"""You are a master travel planner. Using this verified live research:
+{tavily_context[:2500]}
 
-    # Get destination-specific food recommendations
-    db_food = DESTINATION_FOOD.get(dest_key, [])
-    if db_food:
-        food_items = [
-            {
-                "name": f["name"],
-                "type": f["type"],
-                "description": f["description"],
-                "highlight_dish_or_experience": f.get("highlight_dish_or_experience", "Chef's special"),
-                "price_level": f.get("price_level", "$$"),
-                "is_web_search_verified": is_live_tavily
-            }
-            for f in db_food
-        ]
-    else:
-        food_items = [
-            {
-                "name": f"Local Specialty Restaurant in {req.destination}",
-                "type": "Regional Cuisine",
-                "description": f"A well-regarded dining spot in {req.destination} known for regional recipes and fresh local ingredients.",
-                "highlight_dish_or_experience": "Ask locals for the house specialty",
-                "price_level": "$$",
-                "is_web_search_verified": is_live_tavily
-            },
-            {
-                "name": f"Street Food & Market Scene",
-                "type": "Street Food",
-                "description": f"Explore the local food market or night bazaar in {req.destination} for authentic street-level snacks and flavors.",
-                "highlight_dish_or_experience": "Regional street snacks and fresh produce",
-                "price_level": "$",
-                "is_web_search_verified": is_live_tavily
-            }
-        ]
+Generate a valid JSON object tailored specifically for a {duration}-day trip to {req.destination}:
+1. "places": List of 4 real, famous, distinct attractions in {req.destination}. Each item must have:
+   - "name": Real name of the place
+   - "category": e.g. "Historical Landmark", "Scenic Waterfront", "Museum", "Park"
+   - "description": 1-2 sentence compelling description
+   - "best_time_to_visit": e.g. "Morning", "Sunset", "Afternoon"
+   - "estimated_entry_cost": e.g. "Free", "$10 - $25", "Varies"
+   - "tags": list of 2-4 keywords (e.g. ["Heritage", "Views", "Photography"])
+2. "food": List of 3 authentic dishes, specialties, or famous restaurants in {req.destination}. Each item must have:
+   - "name": Name of the dish or restaurant
+   - "type": e.g. "Street Food Specialty", "Iconic Seafood", "Heritage Dining"
+   - "description": 1-2 sentence description
+   - "highlight_dish_or_experience": Specific must-try item
+   - "price_level": "$", "$$", or "$$$"
+3. "itinerary": List of {duration} daily plans. Each item must have:
+   - "day_number": integer
+   - "title": e.g. "Day 1: Arrival & Historic Fort Exploration"
+   - "theme": 3-5 word summary of the day's theme
+   - "morning_title": Specific morning sight/activity
+   - "morning_desc": 1-2 sentence details
+   - "afternoon_title": Specific afternoon sight/activity
+   - "afternoon_desc": 1-2 sentence details
+   - "evening_title": Specific evening sight/activity
+   - "evening_desc": 1-2 sentence details
+
+Return ONLY the raw JSON object, without markdown ticks, without commentary."""
+
+            resp = llm.invoke(synth_prompt)
+            ai_data = extract_json_from_text(resp.content)
+            if ai_data:
+                # 1. Places
+                if ai_data.get("places") and len(ai_data["places"]) >= 2:
+                    for p in ai_data["places"][:5]:
+                        places.append({
+                            "name": p.get("name", f"Attraction in {req.destination}"),
+                            "category": p.get("category", "Sightseeing"),
+                            "description": p.get("description", f"Notable sight in {req.destination}"),
+                            "best_time_to_visit": p.get("best_time_to_visit", "Morning"),
+                            "estimated_entry_cost": p.get("estimated_entry_cost", "Varies"),
+                            "tags": p.get("tags", ["Sightseeing", "Photography"]),
+                            "is_web_search_verified": True
+                        })
+                # 2. Food
+                if ai_data.get("food") and len(ai_data["food"]) >= 2:
+                    for f in ai_data["food"][:4]:
+                        food_items.append({
+                            "name": f.get("name", "Local Specialty"),
+                            "type": f.get("type", "Regional Cuisine"),
+                            "description": f.get("description", f"Signature cuisine of {req.destination}"),
+                            "highlight_dish_or_experience": f.get("highlight_dish_or_experience", "Local house specialty"),
+                            "price_level": f.get("price_level", "$$"),
+                            "is_web_search_verified": True
+                        })
+                # 3. Itinerary Days
+                if ai_data.get("itinerary") and len(ai_data["itinerary"]) >= 1:
+                    custom_days = []
+                    for d_idx, day_obj in enumerate(ai_data["itinerary"][:duration], 1):
+                        custom_days.append({
+                            "day_number": d_idx,
+                            "title": day_obj.get("title", f"Day {d_idx}: Exploring {req.destination}"),
+                            "theme": day_obj.get("theme", "Cultural Discovery & Landmarks"),
+                            "morning": {
+                                "time_slot": "Morning (08:30 - 12:00)",
+                                "title": day_obj.get("morning_title", f"Morning Sightseeing in {req.destination}"),
+                                "description": day_obj.get("morning_desc", "Begin your day visiting top sights."),
+                                "location": req.destination,
+                                "estimated_duration": "3-3.5 hours",
+                                "approximate_cost": "Free - $20",
+                                "is_tavily_sourced": True
+                            },
+                            "afternoon": {
+                                "time_slot": "Afternoon (13:00 - 17:00)",
+                                "title": day_obj.get("afternoon_title", f"Afternoon Cultural Trail"),
+                                "description": day_obj.get("afternoon_desc", "Discover local markets and artisan workshops."),
+                                "location": req.destination,
+                                "estimated_duration": "3-4 hours",
+                                "approximate_cost": "$10 - $40",
+                                "is_tavily_sourced": True
+                            },
+                            "evening": {
+                                "time_slot": "Evening (18:00 - 21:30)",
+                                "title": day_obj.get("evening_title", f"Evening Dining & Sunset Walk"),
+                                "description": day_obj.get("evening_desc", "Relax with an authentic dinner and evening stroll."),
+                                "location": req.destination,
+                                "estimated_duration": "2.5-3 hours",
+                                "approximate_cost": "$20 - $60",
+                                "is_tavily_sourced": True
+                            },
+                            "stay_recommendation": f"Centrally located boutique hotel or guesthouse in {req.destination}.",
+                            "local_transport_tip": f"Explore on foot and use local transit or {req.travel_mode} for longer hops."
+                        })
+                    if len(custom_days) >= 1:
+                        itin_data["days"] = custom_days
+
+                if places and food_items:
+                    dynamic_success = True
+        except Exception as synth_err:
+            tool_logs.append(f"Notice: Groq synthesis encountered: {synth_err}. Using verified database.")
+
+    # Fallback to local database if dynamic synthesis was not completed
+    if not dynamic_success:
+        from backend.tools import DESTINATION_ATTRACTIONS, DESTINATION_FOOD, _get_dest_key
+        dest_key = _get_dest_key(req.destination)
+        db_places = DESTINATION_ATTRACTIONS.get(dest_key, [])
+        if db_places:
+            places = [
+                {
+                    "name": p["name"],
+                    "category": p["category"],
+                    "description": p["description"],
+                    "best_time_to_visit": p.get("best_time_to_visit", "Morning"),
+                    "estimated_entry_cost": p.get("estimated_entry_cost", "Varies"),
+                    "tags": p.get("tags", []),
+                    "is_web_search_verified": is_live_tavily
+                }
+                for p in db_places
+            ]
+        else:
+            places = [
+                {
+                    "name": f"Top Landmark in {req.destination}",
+                    "category": "Must-See Landmark",
+                    "description": f"The primary iconic attraction of {req.destination}.",
+                    "best_time_to_visit": "Morning",
+                    "estimated_entry_cost": "Varies",
+                    "tags": ["Sightseeing", "Photography"],
+                    "is_web_search_verified": is_live_tavily
+                }
+            ]
+
+        db_food = DESTINATION_FOOD.get(dest_key, [])
+        if db_food:
+            food_items = [
+                {
+                    "name": f["name"],
+                    "type": f["type"],
+                    "description": f["description"],
+                    "highlight_dish_or_experience": f.get("highlight_dish_or_experience", "Chef's special"),
+                    "price_level": f.get("price_level", "$$"),
+                    "is_web_search_verified": is_live_tavily
+                }
+                for f in db_food
+            ]
+        else:
+            food_items = [
+                {
+                    "name": f"Local Specialty Dining in {req.destination}",
+                    "type": "Regional Cuisine",
+                    "description": f"Authentic recipes and fresh local ingredients in {req.destination}.",
+                    "highlight_dish_or_experience": "House specialty",
+                    "price_level": "$$",
+                    "is_web_search_verified": is_live_tavily
+                }
+            ]
 
     # Build alternative routes with proper comparison
     from backend.tools import _estimate_distance_km
