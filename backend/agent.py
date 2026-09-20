@@ -217,45 +217,62 @@ def generate_direct_tool_plan(req: TripPlanRequest, tool_logs: List[str]) -> Tri
                 elif "content" in item:
                     tavily_insights.append(item.get("title", "") + ": " + item["content"])
 
-    # 6. Groq + Tavily Dynamic Synthesis for Places, Food & Day-wise Itinerary
+    # 6. Groq + Tavily Dynamic Synthesis for Places, Food, Itinerary & Route Stops
     llm = get_groq_llm()
     places = []
     food_items = []
     dynamic_success = False
 
-    if llm and tavily_insights:
+    if llm:
         try:
-            tool_logs.append("Groq LLM Synthesis: Generating destination-tailored places, cuisine, and activities from live Tavily research")
-            tavily_context = "\n".join(tavily_insights[:6])
-            interests_text = ", ".join(req.interests) if req.interests else "sightseeing, food, culture, nature"
+            tool_logs.append("Groq LLM Synthesis: Generating destination-tailored places, authentic cuisine, and daily activities")
+            if tavily_insights:
+                tool_logs.append(f"Injected {len(tavily_insights)} live Tavily web research snippets into reasoning prompt")
+                context_str = "Verified live web research from Tavily:\n" + "\n".join(tavily_insights[:6])[:2500]
+            else:
+                context_str = f"Destination: {req.destination}. Provide verified, authentic, real-world attractions, local dishes, and cultural landmarks."
 
-            synth_prompt = f"""You are a master travel planner. Using this verified live research:
-{tavily_context[:2500]}
+            interests_text = ", ".join(req.interests) if req.interests else "sightseeing, local food, culture, nature"
 
-Generate a valid JSON object tailored specifically for a {duration}-day trip to {req.destination}:
-1. "places": List of 4 real, famous, distinct attractions in {req.destination}. Each item must have:
-   - "name": Real name of the place
-   - "category": e.g. "Historical Landmark", "Scenic Waterfront", "Museum", "Park"
-   - "description": 1-2 sentence compelling description
+            synth_prompt = f"""You are a master travel planning AI agent.
+{context_str}
+
+Traveler Profile:
+- Journey: {req.origin} to {req.destination} via {req.travel_mode}
+- Duration: {duration} days
+- Travelers: {req.travelers}
+- Total Budget: {req.currency} {req.budget}
+- Interests: {interests_text}
+
+Generate a strictly valid JSON object tailored specifically for {req.destination}:
+1. "places": List of 4 real, famous, iconic attractions in {req.destination}. Each item must have:
+   - "name": Real name of the landmark
+   - "category": e.g. "Historical Fort", "Scenic Promenade", "UNESCO Site", "Sacred Temple"
+   - "description": 1-2 sentence compelling factual description
    - "best_time_to_visit": e.g. "Morning", "Sunset", "Afternoon"
-   - "estimated_entry_cost": e.g. "Free", "$10 - $25", "Varies"
+   - "estimated_entry_cost": e.g. "Free", "$5 - $15", "₹50 - ₹100"
    - "tags": list of 2-4 keywords (e.g. ["Heritage", "Views", "Photography"])
-2. "food": List of 3 authentic dishes, specialties, or famous restaurants in {req.destination}. Each item must have:
-   - "name": Name of the dish or restaurant
-   - "type": e.g. "Street Food Specialty", "Iconic Seafood", "Heritage Dining"
-   - "description": 1-2 sentence description
+2. "food": List of 3 authentic local dishes, specialties, or famous food institutions in {req.destination}. Each item must have:
+   - "name": Name of the dish or legendary restaurant/stall
+   - "type": e.g. "Iconic Street Food", "Regional Specialty", "Heritage Dining"
+   - "description": 1-2 sentence description of the flavors and origin
    - "highlight_dish_or_experience": Specific must-try item
    - "price_level": "$", "$$", or "$$$"
 3. "itinerary": List of {duration} daily plans. Each item must have:
    - "day_number": integer
-   - "title": e.g. "Day 1: Arrival & Historic Fort Exploration"
+   - "title": e.g. "Day 1: Arrival & Historic Exploration"
    - "theme": 3-5 word summary of the day's theme
-   - "morning_title": Specific morning sight/activity
+   - "morning_title": Specific morning sight/activity in {req.destination}
    - "morning_desc": 1-2 sentence details
-   - "afternoon_title": Specific afternoon sight/activity
+   - "afternoon_title": Specific afternoon sight/activity in {req.destination}
    - "afternoon_desc": 1-2 sentence details
-   - "evening_title": Specific evening sight/activity
+   - "evening_title": Specific evening sight/activity in {req.destination}
    - "evening_desc": 1-2 sentence details
+4. "intermediate_stops": List of 1-3 real towns or scenic stopovers along the road from {req.origin} to {req.destination} (if distance > 100km). Each item:
+   - "name": Real town/stop name
+   - "description": Why to stop here (food, scenery, monument)
+   - "recommended_time_spent": e.g. "45 mins", "1.5 hours"
+   - "highlights": list of 2-3 highlights
 
 Return ONLY the raw JSON object, without markdown ticks, without commentary."""
 
@@ -272,7 +289,7 @@ Return ONLY the raw JSON object, without markdown ticks, without commentary."""
                             "best_time_to_visit": p.get("best_time_to_visit", "Morning"),
                             "estimated_entry_cost": p.get("estimated_entry_cost", "Varies"),
                             "tags": p.get("tags", ["Sightseeing", "Photography"]),
-                            "is_web_search_verified": True
+                            "is_web_search_verified": is_live_tavily
                         })
                 # 2. Food
                 if ai_data.get("food") and len(ai_data["food"]) >= 2:
@@ -283,7 +300,7 @@ Return ONLY the raw JSON object, without markdown ticks, without commentary."""
                             "description": f.get("description", f"Signature cuisine of {req.destination}"),
                             "highlight_dish_or_experience": f.get("highlight_dish_or_experience", "Local house specialty"),
                             "price_level": f.get("price_level", "$$"),
-                            "is_web_search_verified": True
+                            "is_web_search_verified": is_live_tavily
                         })
                 # 3. Itinerary Days
                 if ai_data.get("itinerary") and len(ai_data["itinerary"]) >= 1:
@@ -292,39 +309,54 @@ Return ONLY the raw JSON object, without markdown ticks, without commentary."""
                         custom_days.append({
                             "day_number": d_idx,
                             "title": day_obj.get("title", f"Day {d_idx}: Exploring {req.destination}"),
-                            "theme": day_obj.get("theme", "Cultural Discovery & Landmarks"),
+                            "theme": day_obj.get("theme", "Cultural Discovery & Sights"),
                             "morning": {
                                 "time_slot": "Morning (08:30 - 12:00)",
                                 "title": day_obj.get("morning_title", f"Morning Sightseeing in {req.destination}"),
-                                "description": day_obj.get("morning_desc", "Begin your day visiting top sights."),
+                                "description": day_obj.get("morning_desc", "Begin your day exploring top sights."),
                                 "location": req.destination,
                                 "estimated_duration": "3-3.5 hours",
                                 "approximate_cost": "Free - $20",
-                                "is_tavily_sourced": True
+                                "is_tavily_sourced": is_live_tavily
                             },
                             "afternoon": {
                                 "time_slot": "Afternoon (13:00 - 17:00)",
-                                "title": day_obj.get("afternoon_title", f"Afternoon Cultural Trail"),
-                                "description": day_obj.get("afternoon_desc", "Discover local markets and artisan workshops."),
+                                "title": day_obj.get("afternoon_title", f"Afternoon Trail in {req.destination}"),
+                                "description": day_obj.get("afternoon_desc", "Discover local markets and cultural spots."),
                                 "location": req.destination,
                                 "estimated_duration": "3-4 hours",
                                 "approximate_cost": "$10 - $40",
-                                "is_tavily_sourced": True
+                                "is_tavily_sourced": is_live_tavily
                             },
                             "evening": {
                                 "time_slot": "Evening (18:00 - 21:30)",
-                                "title": day_obj.get("evening_title", f"Evening Dining & Sunset Walk"),
+                                "title": day_obj.get("evening_title", f"Evening Dining & Promenade"),
                                 "description": day_obj.get("evening_desc", "Relax with an authentic dinner and evening stroll."),
                                 "location": req.destination,
                                 "estimated_duration": "2.5-3 hours",
                                 "approximate_cost": "$20 - $60",
-                                "is_tavily_sourced": True
+                                "is_tavily_sourced": is_live_tavily
                             },
-                            "stay_recommendation": f"Centrally located boutique hotel or guesthouse in {req.destination}.",
+                            "stay_recommendation": f"Centrally located hotel or boutique guesthouse in {req.destination}.",
                             "local_transport_tip": f"Explore on foot and use local transit or {req.travel_mode} for longer hops."
                         })
                     if len(custom_days) >= 1:
                         itin_data["days"] = custom_days
+
+                # 4. Route intermediate stops if provided by LLM and not in hardcoded DB
+                ai_stops = ai_data.get("intermediate_stops", [])
+                if ai_stops and len(route_data.get("stops", [])) <= 1 and len(ai_stops) >= 1:
+                    enriched_stops = []
+                    for s in ai_stops[:3]:
+                        enriched_stops.append({
+                            "name": s.get("name", "Scenic Viewpoint"),
+                            "location_type": "intermediate_stop",
+                            "description": s.get("description", "Recommended rest and sightseeing waypoint."),
+                            "recommended_time_spent": s.get("recommended_time_spent", "45 mins"),
+                            "highlights": s.get("highlights", ["Scenic views", "Rest facilities"])
+                        })
+                    if enriched_stops:
+                        route_data["stops"] = enriched_stops
 
                 if places and food_items:
                     dynamic_success = True
@@ -466,43 +498,12 @@ Return ONLY the raw JSON object, without markdown ticks, without commentary."""
 
 def plan_trip(req: TripPlanRequest) -> TripPlanResponse:
     """
-    Main entry point for generating a trip plan.
-    Attempts Groq agentic reasoning loop with tool calling.
-    Falls back gracefully to direct tool synthesis if Groq returns invalid JSON or is not set up.
+    Main entry point for generating an authentic, structured trip plan.
+    Executes specialized calculation and search tools, then uses Groq LLM
+    with Tavily live research to synthesize verified attractions, cuisine, and day-wise activities.
     """
-    prompt = f"""
-    Please generate an in-depth, structured travel route plan based on these traveler inputs:
-    - Origin: {req.origin}
-    - Destination: {req.destination}
-    - Departure Date: {req.departure_date}
-    - Return Date: {req.return_date or 'Flexible / Not set'}
-    - Trip Duration: {req.trip_duration_days or 'Calculate from dates'}
-    - Travelers: {req.travelers}
-    - Total Budget: {req.currency} {req.budget}
-    - Travel Mode: {req.travel_mode}
-    - Interests & Preferences: {', '.join(req.interests)}
-    - Special Notes: {req.custom_notes or 'None'}
-
-    Instructions:
-    1. Call `calculate_route_details` to determine realistic distance, durations, and intermediate stops.
-    2. Call `search_travel_info` via Tavily to fetch current top attractions, dining gems, and local conditions.
-    3. Call `estimate_trip_budget` to create an itemized budget breakdown.
-    4. Call `generate_day_wise_itinerary` to schedule day-by-day morning, afternoon, and evening activities.
-    5. Assemble the final result into the specified JSON format.
-    """
-
-    raw_response, tool_logs = run_agentic_planning_loop(prompt)
-    parsed_json = extract_json_from_text(raw_response)
-
-    if parsed_json:
-        try:
-            # Inject reasoning notes
-            parsed_json["agent_reasoning_notes"] = tool_logs
-            return TripPlanResponse(**parsed_json)
-        except Exception as err:
-            tool_logs.append(f"JSON validation failed ({err}), falling back to direct tool synthesis.")
-
-    # Direct tool fallback ensures full uptime and complete adherence to schema
+    tool_logs = []
+    tool_logs.append(f"Received trip planning request: {req.origin} -> {req.destination} via {req.travel_mode}")
     return generate_direct_tool_plan(req, tool_logs)
 
 
