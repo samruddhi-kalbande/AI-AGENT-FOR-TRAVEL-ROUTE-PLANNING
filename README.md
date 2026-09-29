@@ -14,6 +14,9 @@ falls back to a deterministic physics & financial engine when there is no key, a
 [![Tavily](https://img.shields.io/badge/Tavily-Live%20Search-4f46e5)](https://tavily.com/)
 [![Tests](https://img.shields.io/badge/tests-9%20passing-4a7c55)](tests/test_agent.py)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
+[![Live Demo](https://img.shields.io/badge/🚀_Live_Demo-Visit_Atlas-ff69b4?style=for-the-badge)](https://atlas-travel-route-planning.onrender.com/)
+
+🌐 **[Try the Live Demo →](https://atlas-travel-route-planning.onrender.com/)**
 
 </div>
 
@@ -184,6 +187,8 @@ Open:
 - **Main React Dashboard**: [http://localhost:5173/](http://localhost:5173/)
 - **Gradio Agent Chat**: [http://localhost:7860/](http://localhost:7860/)
 - **Interactive OpenAPI Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+> 💡 **Or use the deployed version directly**: [https://atlas-travel-route-planning.onrender.com/](https://atlas-travel-route-planning.onrender.com/)
 
 ---
 
