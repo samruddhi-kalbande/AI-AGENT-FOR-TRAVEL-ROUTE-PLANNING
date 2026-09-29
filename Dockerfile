@@ -20,6 +20,6 @@ COPY gradio_ui/ ./gradio_ui/
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 COPY .env.example ./.env.example
 
-EXPOSE 8000 7860
+EXPOSE 8000
 
-CMD ["sh", "-c", "python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
